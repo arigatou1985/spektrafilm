@@ -105,6 +105,34 @@ def test_write_metadata_drops_structural_exif_groups(tmp_path):
     assert exif["Exif.Photo.LensModel"] == "Canon EF 50mm f/1.8 STM"
 
 
+def test_write_metadata_drops_dng_raw_format_tags(tmp_path):
+    """DNG raw-format tags must not be copied onto a saved RGB image.
+
+    A decoder that finds ``DNGVersion`` / ``ColorMatrix1`` / ``AsShotNeutral``
+    on an ordinary TIFF treats it as a raw file and refuses to open it -- macOS
+    ImageIO, and therefore Preview, returns nil for its dimensions.
+    """
+
+    source_metadata = _build_source_metadata()
+    source_metadata.exif["Exif.Image.UniqueCameraModel"] = "Apple iPhone 15 Pro"
+    source_metadata.exif["Exif.Image.DNGBackwardVersion"] = "1 4 0 0"
+
+    destination_path = tmp_path / "dst.tif"
+
+    save_image_oiio(str(destination_path), np.random.rand(12, 16, 3))
+
+    write_image_metadata(str(destination_path), source_metadata)
+
+    exif = _read_tags(read_image_metadata(str(destination_path)).exif)
+
+    assert "Exif.Image.UniqueCameraModel" not in exif
+    assert "Exif.Image.DNGBackwardVersion" not in exif
+
+    # Descriptive metadata is still carried over.
+    assert exif["Exif.Image.Make"] == "Canon"
+    assert exif["Exif.Image.Model"] == "Canon EOS 5D Mark IV"
+
+
 def test_save_without_metadata_has_no_exif(tmp_path):
     destination_path = tmp_path / "plain.jpg"
 

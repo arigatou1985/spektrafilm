@@ -121,21 +121,29 @@ def write_image_metadata(
     destination.writeMetadata()
 
 
-# EXIF tag prefixes that must not be copied from a source file into a saved
-# image. ``Exif.SubImage*`` groups (the embedded sub-images of NEF/DNG files)
-# are materialised by exiv2 as real TIFF ``SubIFDs`` entries; in a rendered RGB
-# TIFF that makes Adobe Camera Raw / Lightroom parse the file as a raw
-# container and display noise instead of the image. The remaining two entries
-# are structural tags of the same kind, dropped defensively.
+# IFD0 tags that describe the source file's *structure* rather than its
+# content. Copying them onto the saved image breaks decoders: ``Exif.SubImage*``
+# groups (the embedded sub-images of NEF/DNG originals) are materialised by
+# exiv2 as real TIFF ``SubIFDs`` entries, and the DNG raw-format tags
+# (``DNGVersion``, ``ColorMatrix1``, ``AsShotNeutral``, ...) make a decoder treat
+# an ordinary RGB TIFF as a raw file and refuse to open it. Everything else in
+# ``Exif.Image.*`` belongs to the source's layout, so only these descriptive
+# tags are carried over.
+_DESCRIPTIVE_EXIF_IMAGE_TAGS = frozenset({
+    "Exif.Image.Artist",
+    "Exif.Image.Copyright",
+    "Exif.Image.ImageDescription",
+    "Exif.Image.Make",
+    "Exif.Image.Model",
+})
+
 _STRUCTURAL_EXIF_PREFIXES = (
     "Exif.SubImage",
-    "Exif.Image.SubIFDs",
-    "Exif.Image.TIFFEPStandardID",
 )
 
 
 def _descriptive_exif(source_exif: exiv2.ExifData) -> exiv2.ExifData:
-    """Copy ``source_exif``, dropping the structural tags listed above.
+    """Copy ``source_exif``, dropping the structural tags described above.
 
     Only descriptive metadata (camera, lens, exposure, GPS, ...) is carried
     over, so the saved file never inherits IFD structure from its source.
@@ -145,6 +153,8 @@ def _descriptive_exif(source_exif: exiv2.ExifData) -> exiv2.ExifData:
     for datum in source_exif:
         key = datum.key()
         if key.startswith(_STRUCTURAL_EXIF_PREFIXES):
+            continue
+        if key.startswith("Exif.Image.") and key not in _DESCRIPTIVE_EXIF_IMAGE_TAGS:
             continue
         filtered[key] = datum.value()
     return filtered
