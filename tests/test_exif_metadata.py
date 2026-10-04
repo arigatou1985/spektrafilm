@@ -76,6 +76,35 @@ def test_write_metadata_carries_source_tags_and_sets_overrides(tmp_path, monkeyp
     assert exif["Exif.Photo.PixelYDimension"] == "12"
 
 
+def test_write_metadata_drops_structural_exif_groups(tmp_path):
+    """Source sub-image groups must not become TIFF SubIFDs in the saved file.
+
+    NEF/DNG files carry ``Exif.SubImage*`` groups (embedded previews). exiv2
+    materialises them as real TIFF ``SubIFDs`` entries, which makes Adobe Camera
+    Raw / Lightroom read the saved TIFF as a raw container and render noise
+    instead of the image. Descriptive tags must still be copied over.
+    """
+
+    source_metadata = _build_source_metadata()
+    source_metadata.exif["Exif.SubImage1.NewSubfileType"] = 1
+    source_metadata.exif["Exif.SubImage1.JPEGInterchangeFormat"] = 32
+
+    destination_path = tmp_path / "dst.tif"
+
+    save_image_oiio(str(destination_path), np.random.rand(12, 16, 3))
+
+    write_image_metadata(str(destination_path), source_metadata)
+
+    exif = _read_tags(read_image_metadata(str(destination_path)).exif)
+
+    assert "Exif.Image.SubIFDs" not in exif
+    assert "Exif.SubImage1.JPEGInterchangeFormat" not in exif
+
+    # Descriptive metadata is still carried over.
+    assert exif["Exif.Image.Make"] == "Canon"
+    assert exif["Exif.Photo.LensModel"] == "Canon EF 50mm f/1.8 STM"
+
+
 def test_save_without_metadata_has_no_exif(tmp_path):
     destination_path = tmp_path / "plain.jpg"
 

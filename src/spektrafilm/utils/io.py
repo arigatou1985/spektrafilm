@@ -59,8 +59,9 @@ def write_image_metadata(
 ) -> None:
     """Write metadata to an image file after pixel data has been saved.
 
-    Copies any source EXIF, IPTC and XMP tags, then sets overridden tags
-    (Orientation, DateTime, Software, pixel dimensions). When
+    Copies any descriptive source EXIF, IPTC and XMP tags, then sets overridden
+    tags (Orientation, DateTime, Software, pixel dimensions). TIFF-structural
+    EXIF groups are not copied — see ``_STRUCTURAL_EXIF_PREFIXES``. When
     ``saving_color_space`` is given, also tags the file with the EXIF
     ColorSpace / Interoperability fields that match the saved color space and
     records the human-readable profile name in ``Xmp.photoshop.ICCProfile``.
@@ -97,7 +98,7 @@ def write_image_metadata(
     destination.readMetadata()
 
     if source_metadata is not None:
-        destination.setExifData(source_metadata.exif)
+        destination.setExifData(_descriptive_exif(source_metadata.exif))
         destination.setIptcData(source_metadata.iptc)
         destination.setXmpData(source_metadata.xmp)
 
@@ -118,6 +119,35 @@ def write_image_metadata(
         )
 
     destination.writeMetadata()
+
+
+# EXIF tag prefixes that must not be copied from a source file into a saved
+# image. ``Exif.SubImage*`` groups (the embedded sub-images of NEF/DNG files)
+# are materialised by exiv2 as real TIFF ``SubIFDs`` entries; in a rendered RGB
+# TIFF that makes Adobe Camera Raw / Lightroom parse the file as a raw
+# container and display noise instead of the image. The remaining two entries
+# are structural tags of the same kind, dropped defensively.
+_STRUCTURAL_EXIF_PREFIXES = (
+    "Exif.SubImage",
+    "Exif.Image.SubIFDs",
+    "Exif.Image.TIFFEPStandardID",
+)
+
+
+def _descriptive_exif(source_exif: exiv2.ExifData) -> exiv2.ExifData:
+    """Copy ``source_exif``, dropping the structural tags listed above.
+
+    Only descriptive metadata (camera, lens, exposure, GPS, ...) is carried
+    over, so the saved file never inherits IFD structure from its source.
+    """
+
+    filtered = exiv2.ExifData()
+    for datum in source_exif:
+        key = datum.key()
+        if key.startswith(_STRUCTURAL_EXIF_PREFIXES):
+            continue
+        filtered[key] = datum.value()
+    return filtered
 
 
 # EXIF Photo.ColorSpace values per EXIF 2.32 spec.
