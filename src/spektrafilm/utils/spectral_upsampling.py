@@ -9,6 +9,7 @@ import scipy.special
 
 from spektrafilm.profiles.io import Hanatos2025SensitivityAdaptation
 from spektrafilm.utils.fast_interp_lut import apply_lut_cubic_2d
+from spektrafilm.utils.threaded import map_rows
 from spektrafilm.config import SPECTRAL_SHAPE, STANDARD_OBSERVER_CMFS
 from spektrafilm.model.illuminants import standard_illuminant
 
@@ -130,10 +131,16 @@ def _rgb_to_tc_b(rgb, color_space='ITU-R BT.2020', apply_cctf_decoding=False, re
     # CIECAM16 and the spektrafilm output-side CAM16-UCS algorithm use
     # internally, so the input chromaticity projection stays in the
     # same adaptation family as the output gamut compression.
-    xyz = colour.RGB_to_XYZ(rgb, colourspace=color_space,
-                            apply_cctf_decoding=apply_cctf_decoding,
-                            illuminant=illu_xy,
-                            chromatic_adaptation_transform='CAT16')
+    xyz = np.asarray(map_rows(
+        lambda block: colour.RGB_to_XYZ(
+            block,
+            colourspace=color_space,
+            apply_cctf_decoding=apply_cctf_decoding,
+            illuminant=illu_xy,
+            chromatic_adaptation_transform='CAT16',
+        ),
+        np.asarray(rgb),
+    ))
     b = np.sum(xyz, axis=-1)
     xy = xyz[...,0:2] / np.fmax(b[...,None], 1e-10)
     # Previously: xy = np.clip(xy, 0, 1). Removed because the input gamut

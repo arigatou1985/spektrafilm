@@ -3,6 +3,7 @@ from opt_einsum import contract
 
 from spektrafilm.runtime.params_schema import DirCouplersParams
 from spektrafilm.utils.fast_gaussian_filter import fast_gaussian_filter, fast_exponential_filter
+from spektrafilm.utils.threaded import map_rows
 from spektrafilm.model.density_curves import interpolate_exposure_to_density
 
 def compute_density_curves_before_dir_couplers(density_curves, log_exposure, dir_couplers_matrix, positive=False):
@@ -92,14 +93,22 @@ def compute_exposure_correction_dir_couplers(log_raw, density_cmy, density_max,
     Returns:
     numpy.ndarray: The modified raw exposure data after applying the effect of inhibitors.
     """
-    if positive:
-        density_silver = density_max - density_cmy
-    else:
-        density_silver = np.copy(density_cmy)
-    density_silver += high_exposure_couplers_shift*density_silver**2
-    # density_silver[..., k] generated in donor layer k contributes to receiver m
-    # through dir_couplers_matrix[k, m].
-    log_raw_correction = contract('ijk, km->ijm', density_silver, dir_couplers_matrix)
+    def correction_block(log_raw_block, density_cmy_block):
+        # Everything up to the diffusion is per-pixel, so it is split into row
+        # chunks; the filters below are spatial and stay whole (chunking them
+        # would seam).
+        if positive:
+            density_silver = density_max - density_cmy_block
+        else:
+            density_silver = np.copy(density_cmy_block)
+        density_silver += high_exposure_couplers_shift*density_silver**2
+        # density_silver[..., k] generated in donor layer k contributes to
+        # receiver m through dir_couplers_matrix[k, m].
+        return contract('ijk, km->ijm', density_silver, dir_couplers_matrix)
+
+    log_raw = np.asarray(log_raw)
+    density_cmy = np.asarray(density_cmy)
+    log_raw_correction = map_rows(correction_block, log_raw, density_cmy)
     if diffusion_size_pixel>0:
         log_raw_correction = ( (1-diffusion_exp_tail_weight)*fast_gaussian_filter(log_raw_correction, diffusion_size_pixel)
                                        + fast_exponential_filter(log_raw_correction, diffusion_tail_size_pixel)*diffusion_exp_tail_weight)

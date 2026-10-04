@@ -32,6 +32,8 @@ import numpy as np
 from matplotlib.path import Path as MplPath
 from scipy.ndimage import map_coordinates
 
+from spektrafilm.utils.threaded import map_rows
+
 
 # ---------------------------------------------------------------------------
 # Spec dataclass
@@ -1232,11 +1234,24 @@ def compress_rgb(
             raise ValueError(
                 f"output_color_space is required when algorithm={spec.algorithm!r}"
             )
-        return perceptual_fns[spec.algorithm](
-            rgb, output_color_space=output_color_space,
-            threshold=threshold, limit=limit, power=power,
-            lightness_compression=spec.lightness_compression,
-        )
+
+        def compress_block(block: np.ndarray) -> np.ndarray:
+            return perceptual_fns[spec.algorithm](
+                block, output_color_space=output_color_space,
+                threshold=threshold, limit=limit, power=power,
+                lightness_compression=spec.lightness_compression,
+            )
+
+        # These are long colour-space chains and therefore memory-bandwidth
+        # bound; run them on row chunks across threads. That is bit-identical
+        # for per-pixel kernels. The per-space C_max table is built lazily on
+        # first use, so warm it here -- otherwise every chunk would race to
+        # build its own copy.
+        array = np.asarray(rgb)
+        if array.ndim < 2:
+            return compress_block(array)
+        compress_block(array[:1])
+        return map_rows(compress_block, array)
     raise ValueError(f"unknown output algorithm {spec.algorithm!r}")
 
 

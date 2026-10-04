@@ -11,6 +11,7 @@ from spektrafilm.model.glare import add_glare
 from spektrafilm.model.illuminants import standard_illuminant
 from spektrafilm.utils.conversions import density_to_light
 from spektrafilm.utils.gamut_compression import compress_rgb
+from spektrafilm.utils.threaded import map_rows
 
 
 class ScanningStage:
@@ -76,12 +77,15 @@ class ScanningStage:
         illuminant_xyz = contract("k,kl->l", scan_illuminant, STANDARD_OBSERVER_CMFS[:]) / normalization
         illuminant_xy = colour.XYZ_to_xy(illuminant_xyz)
         xyz = add_glare(xyz, illuminant_xyz, glare)
-        rgb = colour.XYZ_to_RGB(
+        rgb = np.asarray(map_rows(
+            lambda block: colour.XYZ_to_RGB(
+                block,
+                colourspace=self._io.output_color_space,
+                apply_cctf_encoding=False,
+                illuminant=illuminant_xy,
+            ),
             xyz,
-            colourspace=self._io.output_color_space,
-            apply_cctf_encoding=False,
-            illuminant=illuminant_xy,
-        )
+        ))
         # Output gamut compression. Compresses chromaticities the
         # simulation reached that fall outside the output primaries
         # cube; for perceptual algorithms (oklch / oklrab / jzazbz /
@@ -129,12 +133,17 @@ class ScanningStage:
 
     def _apply_cctf_encoding(self, rgb: np.ndarray) -> np.ndarray:
         if self._io.output_cctf_encoding:
-            rgb = colour.RGB_to_RGB(
-                rgb,
-                self._io.output_color_space,
-                self._io.output_color_space,
-                apply_cctf_decoding=False,
-                apply_cctf_encoding=True,
+            colour_space = self._io.output_color_space
+            # Per-pixel, so it can be spread over row chunks.
+            rgb = map_rows(
+                lambda block: colour.RGB_to_RGB(
+                    block,
+                    colour_space,
+                    colour_space,
+                    apply_cctf_decoding=False,
+                    apply_cctf_encoding=True,
+                ),
+                np.asarray(rgb),
             )
         return rgb
 

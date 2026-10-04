@@ -390,6 +390,27 @@ class TestCompressRgbDispatcher:
         out = compress_rgb(rgb, spec, output_color_space="sRGB")
         assert out.shape == rgb.shape
 
+    def test_perceptual_dispatch_is_bit_identical_when_chunked(self, monkeypatch):
+        """Threading the perceptual path must not change a single pixel.
+
+        The dispatcher runs these colour-space chains on row chunks across
+        threads. CIECAM02 has no image-wide normalisation, so the result has to
+        match the single-threaded call exactly.
+        """
+
+        from spektrafilm.utils import threaded
+
+        rgb = np.random.default_rng(0).random((128, 64, 3)) * 1.2 - 0.1
+        spec = OutputGamutCompressSpec(algorithm="cam16ucs")
+
+        monkeypatch.setattr(threaded, "MAX_WORKERS", 1)
+        single_threaded = compress_rgb(rgb, spec, output_color_space="sRGB")
+
+        monkeypatch.setattr(threaded, "MAX_WORKERS", 8)
+        chunked = compress_rgb(rgb, spec, output_color_space="sRGB")
+
+        np.testing.assert_array_equal(single_threaded, chunked)
+
 
 # All four perceptual-chroma algorithms (oklch, jzazbz, oklrab, cam16ucs)
 # share the same algorithm shape: bisect C_max in their respective uniform
