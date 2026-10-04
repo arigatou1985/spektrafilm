@@ -128,6 +128,43 @@ def _run_save_output_case(
     return captured
 
 
+def test_save_output_layer_defaults_to_tiff_without_an_extension(monkeypatch) -> None:
+    """The save dialog must default to TIFF, and add it when none was typed.
+
+    The output format is chosen by extension, so a name saved without one would
+    otherwise fail; it should land as TIFF rather than silently being JPEG.
+    """
+
+    controller = GuiController(viewer=object(), widgets=object())
+    output_layer = _make_output_layer(
+        np.full((2, 2, 3), 0.5, dtype=np.float32),
+        output_color_space='sRGB',
+        output_cctf_encoding=True,
+    )
+    captured: dict[str, object] = {}
+    _configure_save_output(
+        monkeypatch, controller, output_layer, make_test_controller_gui_state(), captured
+    )
+
+    seen: dict[str, str] = {}
+
+    def fake_get_save_file_name(_parent, _title, filename, _filters):
+        seen['default'] = filename
+        return 'shot_without_extension', ''
+
+    monkeypatch.setattr(
+        controller_module.QFileDialog,
+        'getSaveFileName',
+        staticmethod(fake_get_save_file_name),
+    )
+    _capture_saved_output(monkeypatch, captured)
+
+    controller.save_output_layer()
+
+    assert seen['default'].endswith('.tif')
+    assert str(captured['saved'][0]).endswith('.tif')
+
+
 def _capture_status(monkeypatch) -> dict[str, object]:
     captured: dict[str, object] = {}
 

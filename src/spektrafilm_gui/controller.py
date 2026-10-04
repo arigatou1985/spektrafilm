@@ -325,9 +325,9 @@ class GuiController:
             return
 
         if self._current_input_path is not None:
-            default_name = Path(self._current_input_path).stem + '.jpg'
+            default_name = Path(self._current_input_path).stem + '.tif'
         else:
-            default_name = 'output.jpg'
+            default_name = 'output.tif'
 
         filepath, _ = _DirMemoryDialog('save_output').get_save_file_name(
             dialog_parent(self._viewer),
@@ -337,6 +337,11 @@ class GuiController:
         )
         if not filepath:
             return
+
+        if not Path(filepath).suffix:
+            # The format is chosen by extension, so a name typed without one
+            # cannot be saved as-is; fall back to 16-bit TIFF.
+            filepath = f'{filepath}.tif'
 
         gui_state = collect_gui_state(widgets=self._widgets)
         float_image_data = self._output_layer_float_data()
