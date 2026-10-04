@@ -369,6 +369,38 @@ def _apply_lens_correction(
     return rgb, lens_info
 
 
+def _active_area_crop(sizes, shape) -> tuple[slice, slice] | None:
+    """Slice removing the masked border LibRaw reports as an inset crop.
+
+    Some sensors (the Sony A1 II, for instance) hand over pixels that lie
+    outside the active image area. LibRaw describes the usable region in
+    ``raw_inset_crops`` and rawpy surfaces it as ``sizes.crop_*``, but
+    ``postprocess`` returns the whole frame — so without this the masked
+    optical-black border ends up in the rendered image.
+
+    Returns ``None`` when there is nothing to crop: no inset crop reported, a
+    box that does not fit inside what ``postprocess`` returned, or a box that is
+    already exactly that shape. Cameras without an inset crop are unaffected.
+    """
+
+    if sizes is None:
+        return None
+    crop_width = getattr(sizes, 'crop_width', 0)
+    crop_height = getattr(sizes, 'crop_height', 0)
+    if not crop_width or not crop_height:
+        return None
+
+    top = getattr(sizes, 'crop_top_margin', 0)
+    left = getattr(sizes, 'crop_left_margin', 0)
+    bottom, right = top + crop_height, left + crop_width
+    height, width = shape[0], shape[1]
+    if bottom > height or right > width:
+        return None
+    if bottom == height and right == width:
+        return None
+    return slice(top, bottom), slice(left, right)
+
+
 def load_and_process_raw_file(
     raw_path: str | PathLike[str],
     white_balance='as_shot',
@@ -418,6 +450,9 @@ def load_and_process_raw_file(
     with rawpy.imread(str(raw_path)) as raw:
         params, postprocess_adaptation, tint_multiplier = _postprocess_params(white_balance, temperature, tint)
         rgb = raw.postprocess(**params).astype(np.float32) / np.float32(65535.0)
+        crop = _active_area_crop(getattr(raw, 'sizes', None), rgb.shape)
+        if crop is not None:
+            rgb = rgb[crop[0], crop[1]]
 
     if lens_correction:
         exif_metadata = _read_exif_metadata(raw_path)
