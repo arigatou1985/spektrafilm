@@ -3,7 +3,7 @@ import pytest
 
 from spektrafilm.model.density_curves import interp_density_cmy_layers
 from spektrafilm.model.grain import apply_grain_to_density, apply_grain_to_density_layers
-from spektrafilm.model.grain import apply_grain
+from spektrafilm.model.grain import apply_grain, layer_particle_model
 from spektrafilm.runtime.params_schema import GrainParams
 
 
@@ -138,3 +138,40 @@ class TestApplyGrain:
         )
 
         np.testing.assert_allclose(result, expected, atol=1e-10)
+
+
+def test_layer_particle_model_follows_the_poisson_thinning_identity():
+    """Grain must be distributed as Poisson(rate * p) times the particle scale.
+
+    ``Binomial(Poisson(lam), p)`` is exactly ``Poisson(lam * p)``, so the model
+    may draw the composite in one step. For a constant density that gives
+
+    * mean = density                     (the model preserves density on average)
+    * var  = lam * p * (od_particle * saturation) ** 2
+    """
+
+    density_value = 0.2
+    density_max = 2.2
+    n_particles = 10.0
+    uniformity = 0.98
+
+    grain = layer_particle_model(
+        np.full((400, 400), density_value),
+        density_max=density_max,
+        n_particles_per_pixel=n_particles,
+        grain_uniformity=uniformity,
+        seed=0,
+        blur_particle=0.0,
+        use_fast_stats=True,
+    )
+
+    probability = density_value / density_max
+    od_particle = density_max / n_particles
+    saturation = 1 - probability * uniformity * (1 - 1e-6)
+    rate = n_particles / saturation * probability
+    assert rate < 30  # exercises the exact Knuth branch, not the normal one
+    scale = od_particle * saturation
+
+    values = np.asarray(grain, dtype=np.float64)
+    assert values.mean() == pytest.approx(density_value, rel=0.02)
+    assert values.var() == pytest.approx(rate * scale**2, rel=0.05)

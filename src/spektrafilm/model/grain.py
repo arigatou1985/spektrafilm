@@ -3,7 +3,7 @@ import scipy
 import scipy.ndimage
 from spektrafilm.model.density_curves import interp_density_cmy_layers
 from spektrafilm.runtime.params_schema import GrainParams
-from spektrafilm.utils.fast_stats import fast_binomial, fast_poisson, fast_lognormal_from_mean_std
+from spektrafilm.utils.fast_stats import fast_poisson, fast_lognormal_from_mean_std
 from spektrafilm.utils.fast_gaussian_filter import fast_gaussian_filter
 
 ################################################################################
@@ -34,16 +34,19 @@ def layer_particle_model(density,
         grain = beta_rvs(probability_of_development*n_particles_per_pixel,
                         (1-probability_of_development)*n_particles_per_pixel)*seeds*od_particle
     elif method=='poisson_binomial':
-        if use_fast_stats:
-            binom_rvs = fast_binomial
-            poisson_rvs = fast_poisson
-        else:
-            binom_rvs = scipy.stats.binom.rvs
-            poisson_rvs = scipy.stats.poisson.rvs
+        # Binomial(Poisson(lam), p) is exactly Poisson(lam * p) -- binomial
+        # thinning of a Poisson process. Drawing the composite in one step
+        # keeps the same distribution while replacing the per-pixel trial loop
+        # in fast_binomial with a single O(1) Poisson draw. That matters in the
+        # dense highlights: with p ~ 0.9 the inversion branch walked ~n*p CDF
+        # steps for every pixel.
         saturation = 1 - probability_of_development*grain_uniformity*(1-1e-6)
-        seeds = poisson_rvs(n_particles_per_pixel/saturation)
-        grain = binom_rvs(seeds, probability_of_development)
-        grain = np.double(grain)*od_particle*saturation
+        if use_fast_stats:
+            particles = fast_poisson(n_particles_per_pixel/saturation*probability_of_development)
+        else:
+            particles = scipy.stats.poisson.rvs(
+                n_particles_per_pixel/saturation*probability_of_development)
+        grain = np.double(particles)*od_particle*saturation
     
     if blur_particle>0:
         # grain = scipy.ndimage.gaussian_filter(grain, blur_particle*np.sqrt(od_particle))
