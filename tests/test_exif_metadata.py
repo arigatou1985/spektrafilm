@@ -184,6 +184,26 @@ def test_save_image_oiio_tiff_bit_depths_roundtrip(tmp_path, bit_depth, expected
         in_img.close()
 
 
+def test_save_image_oiio_writes_jpeg_without_chroma_subsampling(tmp_path):
+    """JPEG must be written 4:4:4 (no chroma subsampling).
+
+    OpenImageIO defaults to 4:2:0, which averages chroma over 2x2 blocks and
+    visibly desaturates fine colour detail compared with what the GUI shows.
+    ``PIL.JpegImagePlugin.get_sampling`` returns 0 for 4:4:4, 1 for 4:2:2 and
+    2 for 4:2:0.
+    """
+
+    from PIL import Image
+    from PIL.JpegImagePlugin import get_sampling
+
+    destination_path = tmp_path / "out.jpg"
+
+    save_image_oiio(str(destination_path), np.random.rand(16, 16, 3))
+
+    with Image.open(destination_path) as image:
+        assert get_sampling(image) == 0
+
+
 @pytest.mark.parametrize("ext", ["jpg", "png", "tif"])
 def test_save_image_oiio_embeds_icc_profile_when_available(tmp_path, monkeypatch, ext):
     import OpenImageIO as oiio

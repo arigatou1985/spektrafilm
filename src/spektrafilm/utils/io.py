@@ -265,7 +265,8 @@ def save_image_oiio(
 
     Pixel format per extension:
 
-    - ``.jpg`` / ``.jpeg``: clipped to [0, 1] and written as uint8.
+    - ``.jpg`` / ``.jpeg``: clipped to [0, 1] and written as uint8 with 4:4:4
+      chroma (no subsampling), so fine colour detail keeps its saturation.
       ``bit_depth`` is ignored.
     - ``.png``: clipped to [0, 1] and written as uint8. ``bit_depth`` is
       ignored.
@@ -323,6 +324,10 @@ def save_image_oiio(
         img_uint8 = np.clip(image_data, 0, 1) * 255.0
         img_uint8 = img_uint8.astype(np.uint8)
         spec = oiio.ImageSpec(width, height, nchannels, oiio.TypeDesc("uint8"))
+        # OpenImageIO defaults to 4:2:0, which averages chroma over 2x2 blocks
+        # and visibly desaturates fine colour detail relative to what the GUI
+        # displays on screen. Keep full chroma resolution instead.
+        spec.attribute("jpeg:subsampling", "4:4:4")
         data_to_write = img_uint8
     elif ext=="exr" and bit_depth==16:
         # Convert the image data to 16-bit half precision.
