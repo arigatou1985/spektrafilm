@@ -156,3 +156,81 @@ def test_active_area_crop_ignores_a_box_that_does_not_fit(monkeypatch) -> None:
     image = raw_file_processor.load_and_process_raw_file('synthetic.nef')
 
     assert image.shape == (4, 4, 3)
+
+
+# The geometry a Sony A1 II reports for a portrait exposure: an 8704x6144
+# sensor frame, flip 6, with the 8640x5760 active area inset 12 px from the top
+# and left. Its masked border therefore sits along the sensor's bottom and right
+# edges -- which is what has to be located again after the rotation.
+_A1_II_PORTRAIT = {
+    'crop_width': 8640, 'crop_height': 5760,
+    'crop_top_margin': 12, 'crop_left_margin': 12,
+    'width': 8704, 'height': 6144,
+}
+
+
+def _a1_ii_sizes(flip):
+    return SimpleNamespace(**_A1_II_PORTRAIT, flip=flip)
+
+
+def test_active_area_crop_maps_the_box_through_a_portrait_flip() -> None:
+    """A rotated frame must get the box rotated with it.
+
+    The margins are sensor-frame coordinates. Handed to the rotated array, the
+    box describes 8652 columns of a 6144 column frame, so it does not fit and
+    drops out -- which is how the masked border came back on portrait shots.
+    """
+
+    crop = raw_file_processor._active_area_crop(_a1_ii_sizes(6), (8704, 6144, 3))
+
+    assert crop == (slice(12, 8652), slice(372, 6132))
+    assert crop[0].stop - crop[0].start == _A1_II_PORTRAIT['crop_width']
+    assert crop[1].stop - crop[1].start == _A1_II_PORTRAIT['crop_height']
+
+
+def test_active_area_crop_keeps_the_box_for_an_unrotated_frame() -> None:
+    crop = raw_file_processor._active_area_crop(_a1_ii_sizes(0), (6144, 8704, 3))
+
+    assert crop == (slice(12, 5772), slice(12, 8652))
+
+
+def test_active_area_crop_mirrors_both_axes_at_180_degrees() -> None:
+    crop = raw_file_processor._active_area_crop(_a1_ii_sizes(3), (6144, 8704, 3))
+
+    assert crop == (slice(372, 6132), slice(52, 8692))
+
+
+def test_active_area_crop_mirrors_the_column_axis_at_flip_5() -> None:
+    crop = raw_file_processor._active_area_crop(_a1_ii_sizes(5), (8704, 6144, 3))
+
+    assert crop == (slice(52, 8692), slice(12, 5772))
+
+
+def test_active_area_crop_drops_out_when_postprocess_already_trimmed() -> None:
+    """A frame that is not the size LibRaw reports is left alone."""
+
+    assert raw_file_processor._active_area_crop(_a1_ii_sizes(6), (5760, 8640, 3)) is None
+
+
+def test_load_and_process_raw_file_crops_a_portrait_frame(monkeypatch) -> None:
+    """The loader must drop the masked border of a rotated frame too.
+
+    Small stand-in for the A1 II geometry: an 8x6 sensor whose active area is
+    inset 1 px, returned by ``postprocess`` already rotated to 8 rows x 6 cols.
+    Only that active block carries signal, so the loader has to return it and
+    nothing else.
+    """
+
+    rotated = np.zeros((8, 6, 3), dtype=np.uint16)
+    rotated[1:7, 1:5] = 12000
+    sizes = SimpleNamespace(
+        crop_width=6, crop_height=4, crop_top_margin=1, crop_left_margin=1,
+        width=8, height=6, flip=6,
+    )
+    _patch_rawpy(monkeypatch, rotated, sizes)
+
+    image = raw_file_processor.load_and_process_raw_file('synthetic_portrait.arw')
+
+    assert image.shape == (6, 4, 3)
+    _assert_valid_rgb(image)
+    np.testing.assert_allclose(image, np.full((6, 4, 3), 12000 / 65535.0, dtype=np.float32))

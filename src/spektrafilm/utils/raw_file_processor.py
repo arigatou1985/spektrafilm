@@ -378,9 +378,18 @@ def _active_area_crop(sizes, shape) -> tuple[slice, slice] | None:
     ``postprocess`` returns the whole frame — so without this the masked
     optical-black border ends up in the rendered image.
 
+    ``crop_top_margin`` / ``crop_left_margin`` are measured in the *sensor*
+    frame, but ``postprocess`` also applies the orientation in ``sizes.flip``.
+    A portrait frame (flip 5 or 6) therefore comes back rotated: its rows index
+    sensor columns and vice versa, and the two 90° rotations send the masked
+    edge to opposite sides. The box has to be mapped through that rotation —
+    handed to the rotated array unchanged it simply does not fit, and silently
+    drops out, which is how the border comes back on portrait shots.
+
     Returns ``None`` when there is nothing to crop: no inset crop reported, a
-    box that does not fit inside what ``postprocess`` returned, or a box that is
-    already exactly that shape. Cameras without an inset crop are unaffected.
+    frame ``postprocess`` already trimmed, a box that does not fit, or a box
+    that is already the whole frame. Cameras without an inset crop are
+    unaffected.
     """
 
     if sizes is None:
@@ -392,13 +401,44 @@ def _active_area_crop(sizes, shape) -> tuple[slice, slice] | None:
 
     top = getattr(sizes, 'crop_top_margin', 0)
     left = getattr(sizes, 'crop_left_margin', 0)
+    flip = getattr(sizes, 'flip', 0)
+
+    # ``postprocess`` hands back the whole sensor frame with ``flip`` applied,
+    # so rebuild that frame's extent from the array we were given.
+    height, width = int(shape[0]), int(shape[1])
+    rotated = flip in (5, 6)
+    sensor_height, sensor_width = (width, height) if rotated else (height, width)
+
+    # If the array is not the sensor frame LibRaw reports, ``postprocess``
+    # already trimmed it and these margins describe something else.
+    reported = (getattr(sizes, 'width', 0), getattr(sizes, 'height', 0))
+    if all(reported) and reported != (sensor_width, sensor_height):
+        return None
+
     bottom, right = top + crop_height, left + crop_width
-    height, width = shape[0], shape[1]
-    if bottom > height or right > width:
+    if flip == 6:
+        # 90°, sensor columns run down the output rows and the sensor's bottom
+        # masked rows land on the output's left edge.
+        rows = slice(left, right)
+        cols = slice(sensor_height - bottom, sensor_height - top)
+    elif flip == 5:
+        # The other 90°: sensor columns run down the output rows mirrored, and
+        # the masked rows land on the output's right edge.
+        rows = slice(sensor_width - right, sensor_width - left)
+        cols = slice(top, bottom)
+    elif flip == 3:
+        # 180°: both axes mirrored.
+        rows = slice(sensor_height - bottom, sensor_height - top)
+        cols = slice(sensor_width - right, sensor_width - left)
+    else:
+        rows = slice(top, bottom)
+        cols = slice(left, right)
+
+    if rows.start < 0 or cols.start < 0 or rows.stop > height or cols.stop > width:
         return None
-    if bottom == height and right == width:
+    if rows.stop - rows.start == height and cols.stop - cols.start == width:
         return None
-    return slice(top, bottom), slice(left, right)
+    return rows, cols
 
 
 def load_and_process_raw_file(
